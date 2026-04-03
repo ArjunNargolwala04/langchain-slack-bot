@@ -9,3 +9,4 @@ build/
 .pytest_cache/
 .claude
 eval_results.json
+data/checkpoints.sqlite

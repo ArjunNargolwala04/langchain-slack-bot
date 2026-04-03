@@ -104,6 +104,19 @@ _TOOL_STATUS = {
 _SLACK_MAX_LENGTH = 3900
 
 
+def _format_for_slack(text: str) -> str:
+    """Convert markdown formatting to Slack-compatible formatting."""
+    # Remove ### headers, keep the text
+    text = re.sub(r'#{1,6}\s*', '', text)
+    # Convert **bold** to *bold*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    # Convert numbered lists with bold (1. *Item*:) to plain bullets
+    text = re.sub(r'\d+\.\s*\*(.+?)\*:', r'• \1:', text)
+    # Convert remaining numbered lists to bullets
+    text = re.sub(r'^\d+\.\s', '• ', text, flags=re.MULTILINE)
+    return text
+
+
 async def _process_message(
     text: str, channel: str, thread_ts: str, user: str
 ) -> None:
@@ -126,6 +139,9 @@ async def _process_message(
         answer = await asyncio.to_thread(
             _run_agent_with_progress, text, thread_ts, channel, ack_ts,
         )
+
+        # Convert markdown to Slack formatting
+        answer = _format_for_slack(answer)
 
         # Post the final answer, splitting if it exceeds Slack's limit
         if len(answer) <= _SLACK_MAX_LENGTH:
@@ -174,42 +190,60 @@ def _run_agent_with_progress(
     """
     config = {"configurable": {"thread_id": thread_ts}}
     last_status = None
+    answer = "I wasn't able to generate a response. Please try again."
 
-    for event in agent.stream(
+    stream = agent.stream(
         {"messages": [HumanMessage(content=text)]}, config=config,
-    ):
-        # The stream yields {node_name: state_update} dicts.
-        # After the tools node runs, update Slack with progress.
-        if "tools" in event:
-            tool_messages = event["tools"].get("messages", [])
-            for tm in tool_messages:
-                # ToolMessage has .name with the tool that produced it
-                tool_name = getattr(tm, "name", None)
-                status = _TOOL_STATUS.get(tool_name)
-                if status and status != last_status:
-                    last_status = status
-                    try:
-                        update_message(
-                            channel=channel, ts=ack_ts, text=status,
-                        )
-                    except Exception:
-                        pass
+    )
+    try:
+        for event in stream:
+            # The stream yields {node_name: state_update} dicts.
+            # After the tools node runs, update Slack with progress.
+            if "tools" in event:
+                tool_messages = event["tools"].get("messages", [])
+                for tm in tool_messages:
+                    tool_name = getattr(tm, "name", None)
+                    status = _TOOL_STATUS.get(tool_name)
+                    if status and status != last_status:
+                        last_status = status
+                        try:
+                            update_message(
+                                channel=channel, ts=ack_ts, text=status,
+                            )
+                        except Exception:
+                            pass
 
-        # After the agent node, check for the final answer
-        if "agent" in event:
-            messages = event["agent"].get("messages", [])
-            if messages:
-                last_msg = messages[-1]
-                if not getattr(last_msg, "tool_calls", None):
-                    return last_msg.content
+            # After the agent produces an answer, show verifying status
+            if "agent" in event:
+                messages = event["agent"].get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                    if not getattr(last_msg, "tool_calls", None):
+                        try:
+                            update_message(
+                                channel=channel, ts=ack_ts,
+                                text=":white_check_mark: Verifying answer...",
+                            )
+                        except Exception:
+                            pass
 
-        # Handle the limit node
-        if "limit" in event:
-            messages = event["limit"].get("messages", [])
-            if messages:
-                return messages[-1].content
+            # Verify node produces the final answer with confidence score
+            if "verify" in event:
+                messages = event["verify"].get("messages", [])
+                if messages:
+                    answer = messages[-1].content
+                    break
 
-    return "I wasn't able to generate a response. Please try again."
+            # Handle the limit node
+            if "limit" in event:
+                messages = event["limit"].get("messages", [])
+                if messages:
+                    answer = messages[-1].content
+                    break
+    finally:
+        stream.close()
+
+    return answer
 
 
 def _send_error(

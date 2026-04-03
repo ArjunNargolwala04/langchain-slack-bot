@@ -11,3 +11,5 @@ class AgentState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
     # Number of tool call rounds executed (safety limit)
     tool_call_count: int
+    # Whether the answer has been verified by the confidence scorer
+    verified: bool

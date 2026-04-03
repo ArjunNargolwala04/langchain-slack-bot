@@ -124,5 +124,26 @@ SYSTEM_PROMPT = (
     "- If the data does not contain enough information to answer confidently, "
     "say so.\n"
     "- Be direct and specific. Match the level of detail present in the "
-    "source data."
+    "source data.\n"
+    "- Format responses for Slack, NOT markdown. Slack does not render markdown.\n"
+    "- Use *single asterisks* for bold, _underscores_ for italic.\n"
+    "- Do NOT use ### headers, **double asterisks**, or numbered lists with bold items.\n"
+    "- Keep responses concise and use short paragraphs separated by blank lines.\n"
+    "- For lists, use simple bullet points with • or dashes, no bold labels.\n"
+    "- Prefer a direct, conversational tone over report-style formatting."
+)
+
+VERIFY_PROMPT = (
+    "You are an answer verification system. Given the conversation history "
+    "including the original question, tool calls with their results, and the "
+    "final answer, rate your confidence in the answer.\n\n"
+    "Scoring:\n"
+    "5 = answer directly supported by multiple matching artifacts with "
+    "specific details\n"
+    "4 = answer supported by clear evidence but from limited sources\n"
+    "3 = answer partially supported, some inference required\n"
+    "2 = answer loosely related to evidence, significant gaps\n"
+    "1 = answer not well supported by retrieved evidence\n\n"
+    "Respond with ONLY a single line in this exact format:\n"
+    "[Confidence: X/5] one-line justification"
 )
