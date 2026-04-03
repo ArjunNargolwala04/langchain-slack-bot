@@ -1,10 +1,28 @@
 # Northstar Q&A Slack Bot
 
-## Overview
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![LangGraph](https://img.shields.io/badge/LangGraph-1.1-green)
+![Tests](https://img.shields.io/badge/tests-36%20passing-brightgreen)
+![Accuracy](https://img.shields.io/badge/accuracy-7%2F7%20(100%25)-brightgreen)
 
 A Slack-based Q&A chatbot for Northstar, an enterprise software startup. The bot answers questions grounded in an internal SQLite database containing customer records, call transcripts, support tickets, implementation details, and competitor research. Built with LangGraph, FastAPI, and GPT-4o.
 
+## Demo
+
+[Watch the demo →](https://www.loom.com/share/7e279cad17824f96a38386802bf8653f)
+
 ## Architecture
+
+```mermaid
+graph LR
+    START --> agent
+    agent -->|tool calls| tools
+    agent -->|answer ready| verify
+    agent -->|over 15 calls| limit
+    tools --> agent
+    verify --> END
+    limit --> END
+```
 
 FastAPI receives Slack webhook events (app mentions) and runs a LangGraph ReAct agent that reasons over four database tools:
 
@@ -110,6 +128,24 @@ Responses are posted back into the originating Slack thread with live progress u
    @YourBotName Which customer's issue started after the 2026-02-20 taxonomy rollout?
    ```
 
+## Evaluation
+
+```
+Accuracy:    7/7 (100%)
+Avg tools:   2.3 calls/query
+Avg latency: 7.5s/query
+Total tokens: 75,023
+Est. cost:   $0.38
+```
+
+Run the full evaluation harness:
+
+```bash
+make eval
+```
+
+This runs all 7 example queries from the assignment spec and reports correctness (with positive and negative keyword checks), tool call count, wall-clock time, token usage, and estimated cost. Results are also written to `eval_results.json`.
+
 ## Running Tests
 
 ```bash
@@ -118,33 +154,18 @@ make test
 
 # All tests including agent integration tests (requires OPENAI_API_KEY)
 make test-all
-
-# Evaluation harness — runs all 7 example queries with metrics
-make eval
 ```
-
-## Evaluation Harness
-
-`eval.py` runs all 7 example queries from the assignment spec and produces a structured report:
-
-```bash
-python eval.py
-```
-
-For each query it tracks correctness (keyword matching with positive and negative checks), tool call count, wall-clock time, token usage, and estimated cost. Results are also written to `eval_results.json`.
 
 ## Project Structure
 
 ```
 langchain-slack-bot/
 ├── agent/
-│   ├── __init__.py
 │   ├── agent.py           # LangGraph agent graph (ReAct loop + verify node)
 │   ├── prompts.py         # System prompt and verification prompt
 │   ├── state.py           # AgentState TypedDict
 │   └── tools.py           # Database tools (schema, query, search, read)
 ├── app/
-│   ├── __init__.py
 │   ├── config.py          # Environment variable loading, LangSmith setup
 │   ├── server.py          # FastAPI webhook, progressive UX, error handling
 │   └── slack.py           # Slack API client, signature verification
@@ -152,8 +173,8 @@ langchain-slack-bot/
 │   └── synthetic_startup.sqlite
 ├── tests/
 │   ├── test_agent.py      # Agent integration tests (8, requires API key)
-│   ├── test_hard_queries.py   # Standalone hard query test script
-│   ├── test_local.py      # Standalone easy query test script
+│   ├── test_hard_queries.py
+│   ├── test_local.py
 │   ├── test_server.py     # Server endpoint tests (12)
 │   ├── test_slack.py      # Signature verification tests (4)
 │   └── test_tools.py      # Database tool tests (12)
@@ -162,6 +183,5 @@ langchain-slack-bot/
 ├── Makefile               # setup, test, test-all, run, eval
 ├── requirements.txt
 ├── DESIGN.md
-├── .env.example
-└── README.md
+└── .env.example
 ```
