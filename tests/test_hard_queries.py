@@ -1,4 +1,4 @@
-# test_hard_queries.py - tests for the 3 harder example queries
+# test_hard_queries.py to test 3 harder example queries
 
 from langchain_core.messages import HumanMessage
 from agent.agent import build_graph

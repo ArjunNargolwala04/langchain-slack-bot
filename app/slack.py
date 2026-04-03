@@ -1,6 +1,5 @@
 # Slack API client.
 # Handles signature verification, message posting, and message updating.
-# This is the only file that imports slack_sdk.
 
 import hashlib
 import hmac
@@ -31,7 +30,7 @@ def verify_request(body: bytes, timestamp: str, signature: str) -> bool:
     if not SLACK_SIGNING_SECRET:
         return False
 
-    # Reject requests older than 5 minutes
+    # Reject requests older than 5 mins
     try:
         ts = int(timestamp)
     except (ValueError, TypeError):
@@ -40,7 +39,7 @@ def verify_request(body: bytes, timestamp: str, signature: str) -> bool:
     if abs(time.time() - ts) > 300:
         return False
 
-    # Reconstruct the signature
+    # Reconstruct signature
     base_string = f"v0:{timestamp}:{body.decode('utf-8')}"
     expected = "v0=" + hmac.new(
         SLACK_SIGNING_SECRET.encode(),

@@ -1,20 +1,15 @@
 # eval.py — Evaluation harness for the Northstar Q&A agent.
 # Runs all 7 example queries, measures correctness, tool calls, latency, tokens.
-# Usage: python eval.py
 
 import json
 import time
 from datetime import datetime, timezone
-
 from langchain_core.messages import HumanMessage
-
 from agent.agent import build_graph
 from app.config import MODEL_NAME
 
 
-# ---------------------------------------------------------------------------
 # Query definitions: question, short label, keyword checks
-# ---------------------------------------------------------------------------
 
 QUERIES = [
     {
@@ -109,9 +104,7 @@ QUERIES = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 def _extract_tokens(messages) -> int:
     """Sum token usage from AIMessages that have usage_metadata."""
@@ -149,9 +142,7 @@ def _check_query(answer: str, query_def: dict) -> tuple[bool, list[str]]:
     return len(failures) == 0, failures
 
 
-# ---------------------------------------------------------------------------
 # Main
-# ---------------------------------------------------------------------------
 
 def run_eval():
     results = []
@@ -217,7 +208,7 @@ def run_eval():
         print(f"  Est. cost:   ${est_cost:.3f}")
     print(f"{'='*60}")
 
-    # Write JSON for programmatic consumption
+    # JSON
     report = {
         "run_time": run_time,
         "model": MODEL_NAME,

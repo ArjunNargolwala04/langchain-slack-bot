@@ -9,7 +9,7 @@ from langchain_core.messages import BaseMessage
 class AgentState(TypedDict):
     # Conversation history
     messages: Annotated[list[BaseMessage], add_messages]
-    # Number of tool call rounds executed (safety limit)
+    # tool call safety limit
     tool_call_count: int
-    # Whether the answer has been verified by the confidence scorer
+    # answer verified by confidence scorer
     verified: bool

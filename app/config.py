@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# LangSmith tracing (optional — enable by setting LANGSMITH_API_KEY)
+# LangSmith tracing 
 if os.environ.get("LANGSMITH_API_KEY"):
     os.environ.setdefault("LANGSMITH_TRACING", "true")
 

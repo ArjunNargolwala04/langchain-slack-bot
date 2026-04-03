@@ -6,7 +6,16 @@ A Slack-based Q&A chatbot for Northstar, an enterprise software startup. The bot
 
 ## Architecture
 
-FastAPI receives Slack webhook events (app mentions) and runs a LangGraph ReAct agent that reasons over four database tools: `get_schema` (inspect tables), `query_database` (read-only SQL), `search_artifacts` (full-text search returning summaries), and `read_artifact` (fetch full document content by ID). The agent uses two-phase retrieval: first search for artifact summaries, then read full content for the most relevant hits. Responses are posted back into the originating Slack thread. A `MemorySaver` checkpointer maintains conversation history per thread, enabling multi-turn follow-up questions.
+FastAPI receives Slack webhook events (app mentions) and runs a LangGraph ReAct agent that reasons over four database tools:
+
+- `get_schema` — inspect table structure and row counts
+- `query_database` — read-only SQL against structured tables
+- `search_artifacts` — full-text search returning summaries
+- `read_artifact` — fetch full document content by ID
+
+The agent uses two-phase retrieval: first search for artifact summaries, then read full content for the most relevant hits. After the agent produces an answer, a verification node scores confidence (1-5) based on how well the evidence supports the answer.
+
+Responses are posted back into the originating Slack thread with live progress updates as the agent works. A `SqliteSaver` checkpointer maintains conversation history per thread, enabling multi-turn follow-up questions that persist across server restarts.
 
 ## Setup
 
@@ -26,20 +35,21 @@ FastAPI receives Slack webhook events (app mentions) and runs a LangGraph ReAct 
    cd langchain-slack-bot
    ```
 
-2. **Create a virtual environment and activate it**
+2. **Create a virtual environment and install dependencies**
+
+   ```bash
+   make setup
+   ```
+
+   Or manually:
 
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
-   ```
-
-3. **Install dependencies**
-
-   ```bash
    pip install -r requirements.txt
    ```
 
-4. **Configure environment variables**
+3. **Configure environment variables**
 
    ```bash
    cp .env.example .env
@@ -55,20 +65,29 @@ FastAPI receives Slack webhook events (app mentions) and runs a LangGraph ReAct 
    DATABASE_PATH=./data/synthetic_startup.sqlite
    ```
 
-5. **Create a Slack app**
+   Optional — enable LangSmith tracing:
 
-   - Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App > From scratch**.
-   - Under **OAuth & Permissions**, add these bot token scopes: `chat:write`, `channels:history`, `app_mentions:read`.
-   - Click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-...`) into your `.env`.
-   - Under **Basic Information**, copy the **Signing Secret** into your `.env`.
-
-6. **Run the server**
-
-   ```bash
-   uvicorn app.server:app --port 3000
+   ```
+   LANGSMITH_API_KEY=your-langsmith-key
+   LANGSMITH_TRACING=true
    ```
 
-7. **Expose with ngrok**
+4. **Create a Slack app**
+
+   - Go to [api.slack.com/apps](https://api.slack.com/apps) and click **Create New App > From scratch**
+   - Under **OAuth & Permissions**, add these bot token scopes: `chat:write`, `channels:history`, `app_mentions:read`
+   - Click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-...`) into your `.env`
+   - Under **Basic Information**, copy the **Signing Secret** into your `.env`
+
+5. **Run the server**
+
+   ```bash
+   make run
+   ```
+
+   Or manually: `uvicorn app.server:app --port 3000`
+
+6. **Expose with ngrok**
 
    In a separate terminal:
 
@@ -76,14 +95,14 @@ FastAPI receives Slack webhook events (app mentions) and runs a LangGraph ReAct 
    ngrok http 3000
    ```
 
-8. **Configure Slack event subscriptions**
+7. **Configure Slack event subscriptions**
 
-   - In your Slack app settings, go to **Event Subscriptions** and toggle it on.
-   - Set the Request URL to `https://<your-ngrok-url>/slack/events`.
-   - Under **Subscribe to bot events**, add `app_mention`.
-   - Save changes and reinstall the app if prompted.
+   - In your Slack app settings, go to **Event Subscriptions** and toggle it on
+   - Set the Request URL to `https://<your-ngrok-url>/slack/events`
+   - Under **Subscribe to bot events**, add `app_mention`
+   - Save changes and reinstall the app if prompted
 
-9. **Test it**
+8. **Test it**
 
    Invite the bot to a channel (`/invite @YourBotName`), then mention it with a question:
 
@@ -93,49 +112,56 @@ FastAPI receives Slack webhook events (app mentions) and runs a LangGraph ReAct 
 
 ## Running Tests
 
-Install pytest if you haven't already:
-
 ```bash
-pip install pytest
+# Unit tests — no API key needed (28 tests)
+make test
+
+# All tests including agent integration tests (requires OPENAI_API_KEY)
+make test-all
+
+# Evaluation harness — runs all 7 example queries with metrics
+make eval
 ```
 
-**Unit tests (no API key needed):**
+## Evaluation Harness
+
+`eval.py` runs all 7 example queries from the assignment spec and produces a structured report:
 
 ```bash
-pytest tests/test_tools.py tests/test_slack.py -v
+python eval.py
 ```
 
-**Agent integration tests (requires `OPENAI_API_KEY`):**
-
-```bash
-pytest tests/test_agent.py -v
-```
+For each query it tracks correctness (keyword matching with positive and negative checks), tool call count, wall-clock time, token usage, and estimated cost. Results are also written to `eval_results.json`.
 
 ## Project Structure
 
 ```
 langchain-slack-bot/
 ├── agent/
-│   ├── __init__.py        # Package init
-│   ├── agent.py           # LangGraph ReAct agent graph definition
-│   ├── prompts.py         # System prompt guiding agent behavior
-│   ├── state.py           # AgentState TypedDict for graph state
-│   └── tools.py           # Database tools (get_schema, query_database, search_artifacts, read_artifact)
+│   ├── __init__.py
+│   ├── agent.py           # LangGraph agent graph (ReAct loop + verify node)
+│   ├── prompts.py         # System prompt and verification prompt
+│   ├── state.py           # AgentState TypedDict
+│   └── tools.py           # Database tools (schema, query, search, read)
 ├── app/
-│   ├── __init__.py        # Package init
-│   ├── config.py          # Environment variable loading
-│   ├── server.py          # FastAPI webhook endpoint with async processing
-│   └── slack.py           # Slack API client, signature verification, message posting
+│   ├── __init__.py
+│   ├── config.py          # Environment variable loading, LangSmith setup
+│   ├── server.py          # FastAPI webhook, progressive UX, error handling
+│   └── slack.py           # Slack API client, signature verification
 ├── data/
-│   └── synthetic_startup.sqlite  # SQLite database (customers, artifacts, products, etc.)
+│   └── synthetic_startup.sqlite
 ├── tests/
-│   ├── test_agent.py      # Agent integration tests (requires OpenAI API key)
-│   ├── test_slack.py      # Slack signature verification tests
-│   └── test_tools.py      # Database tool unit tests
-├── test_local.py          # Standalone easy query test script
-├── test_hard_queries.py   # Standalone hard query test script
-├── requirements.txt       # Python dependencies
-├── DESIGN.md              # Design document
-├── .env.example           # Template for environment variables
-└── README.md              # This file
+│   ├── test_agent.py      # Agent integration tests (8, requires API key)
+│   ├── test_hard_queries.py   # Standalone hard query test script
+│   ├── test_local.py      # Standalone easy query test script
+│   ├── test_server.py     # Server endpoint tests (12)
+│   ├── test_slack.py      # Signature verification tests (4)
+│   └── test_tools.py      # Database tool tests (12)
+├── conftest.py            # Pytest path configuration
+├── eval.py                # Evaluation harness with metrics
+├── Makefile               # setup, test, test-all, run, eval
+├── requirements.txt
+├── DESIGN.md
+├── .env.example
+└── README.md
 ```

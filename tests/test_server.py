@@ -40,7 +40,7 @@ def _sign(body: bytes, timestamp: str = None) -> dict:
 client = TestClient(app)
 
 
-# --- Health endpoint ---
+# Health endpoint
 
 class TestHealth:
     def test_health(self):
@@ -49,7 +49,7 @@ class TestHealth:
         assert resp.json() == {"status": "ok"}
 
 
-# --- URL verification challenge ---
+# URL verification challenge
 
 class TestUrlVerification:
     def test_url_verification(self):
@@ -60,7 +60,7 @@ class TestUrlVerification:
         assert resp.json()["challenge"] == "abc123"
 
 
-# --- Signature verification ---
+# Signature verification
 
 class TestSignatureVerification:
     def test_rejects_invalid_signature(self):
@@ -88,7 +88,7 @@ class TestSignatureVerification:
         assert resp.status_code == 401
 
 
-# --- Event filtering ---
+# Event filtering
 
 class TestEventFiltering:
     def test_ignores_non_app_mention(self):
@@ -151,7 +151,7 @@ class TestEventFiltering:
         assert resp.status_code == 200
 
 
-# --- Deduplication ---
+# Deduplication
 
 class TestDeduplication:
     @patch("app.server._process_message")
@@ -170,16 +170,16 @@ class TestDeduplication:
         body = json.dumps(payload).encode()
         headers = _sign(body)
 
-        # First request — should process
+        # First request should process
         client.post("/slack/events", content=body, headers=headers)
         assert mock_process.call_count == 1
 
-        # Second request with same event_id — should be deduped
+        # Second request w/ same event_id should be deduped
         client.post("/slack/events", content=body, headers=headers)
         assert mock_process.call_count == 1
 
 
-# --- Message processing (mocked Slack calls) ---
+# Message processing (mocked Slack calls)
 
 class TestMessageProcessing:
     @patch("app.server._process_message")
@@ -200,7 +200,7 @@ class TestMessageProcessing:
         assert resp.status_code == 200
         mock_process.assert_called_once()
         args = mock_process.call_args[0]
-        assert args[0] == "what is BlueHarbor?"  # text with mention stripped
+        assert args[0] == "what is BlueHarbor?"  
         assert args[1] == "C123"  # channel
         assert args[2] == "1111.2222"  # thread_ts
 
@@ -222,4 +222,4 @@ class TestMessageProcessing:
         resp = client.post("/slack/events", content=body, headers=_sign(body))
         assert resp.status_code == 200
         args = mock_process.call_args[0]
-        assert args[2] == "1111.0000"  # should use thread_ts, not ts
+        assert args[2] == "1111.0000"  

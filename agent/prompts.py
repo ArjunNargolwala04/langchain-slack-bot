@@ -130,7 +130,12 @@ SYSTEM_PROMPT = (
     "- Do NOT use ### headers, **double asterisks**, or numbered lists with bold items.\n"
     "- Keep responses concise and use short paragraphs separated by blank lines.\n"
     "- For lists, use simple bullet points with • or dashes, no bold labels.\n"
-    "- Prefer a direct, conversational tone over report-style formatting."
+    "- Prefer a direct, conversational tone over report-style formatting.\n"
+    "- After your answer, suggest 2-3 brief follow-up questions the user "
+    "might want to ask based on what you found. Format as:\n"
+    "  _You might also want to ask:_\n"
+    "  • follow-up question 1\n"
+    "  • follow-up question 2"
 )
 
 VERIFY_PROMPT = (

@@ -11,7 +11,7 @@ class TestGetSchema:
             assert table in result, f"Expected '{table}' in schema output"
 
     def test_get_schema_caching(self):
-        # Reset cache so we can verify caching behavior
+        # Reset cache so we can verify behavior
         tools_module._schema_cache = None
         first = get_schema.invoke({})
         second = get_schema.invoke({})
@@ -52,9 +52,9 @@ class TestSearchArtifacts:
 
 class TestReadArtifact:
     def test_read_artifact_valid_id(self):
-        # First search to get a real artifact ID
+        # First search to get real artifact ID
         search_result = search_artifacts.invoke({"query": "taxonomy rollout"})
-        # Extract an artifact ID from the search result (format: [art_xxx])
+        # Extract artifact ID from search result (format: [art_xxx])
         match = re.search(r"\[(art_[^\]]+)\]", search_result)
         assert match, "Could not find an artifact ID in search results"
         artifact_id = match.group(1)
@@ -67,11 +67,11 @@ class TestReadArtifact:
         assert "No artifacts found" in result
 
     def test_read_artifact_caps_at_five(self):
-        # Get 7 real artifact IDs from the database
+        # Get 7 real artifact IDs from db
         query_result = query_database.invoke({
             "sql": "SELECT artifact_id FROM artifacts LIMIT 7"
         })
-        # Parse artifact IDs from the query result (skip header and separator lines)
+        # Parse artifact IDs from query result
         lines = query_result.strip().split("\n")
         artifact_ids = []
         for line in lines:
@@ -82,6 +82,5 @@ class TestReadArtifact:
 
         # Pass all 7; the tool should cap at 5
         result = read_artifact.invoke({"artifact_ids": artifact_ids})
-        # Count the "===" separators that appear before each artifact
-        separator_count = result.count("===") // 2  # each artifact has opening and closing ===
+        separator_count = result.count("===") // 2 
         assert separator_count == 5, f"Expected 5 artifacts, got {separator_count}"

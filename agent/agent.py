@@ -2,24 +2,24 @@
 # ReAct loop: agent reasons and calls tools until it has enough info to answer.
 
 import logging
+import sqlite3 as _sqlite3
 import time
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
-import sqlite3 as _sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
-
-logger = logging.getLogger(__name__)
-
-MAX_TOOL_CALLS = 15
 
 from app.config import MODEL_NAME
 from agent.state import AgentState
 from agent.tools import ALL_TOOLS
 from agent.prompts import SYSTEM_PROMPT, VERIFY_PROMPT
 
-# Build a lookup so the tool node can find tools by name
+logger = logging.getLogger(__name__)
+
+MAX_TOOL_CALLS = 15
+
+# Build lookup so the tool node can find tools by name
 _tools_by_name = {t.name: t for t in ALL_TOOLS}
 
 
@@ -35,7 +35,8 @@ def _agent_node(state: AgentState) -> dict:
     response = model.invoke(
         [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
     )
-    return {"messages": [response]}
+    # Reset verified so each turn goes through the verify node
+    return {"messages": [response], "verified": False}
 
 
 def _tool_node(state: AgentState) -> dict:
@@ -62,6 +63,21 @@ def _tool_node(state: AgentState) -> dict:
     }
 
 
+def _verify_node(state: AgentState) -> dict:
+    """Score confidence of the agent's answer against retrieved evidence."""
+    model = init_chat_model(MODEL_NAME, temperature=0)
+    response = model.invoke(
+        [SystemMessage(content=VERIFY_PROMPT)] + state["messages"]
+    )
+    confidence_line = response.content.strip()
+    last_answer = state["messages"][-1].content
+    updated = f"{last_answer}\n\n---\n_{confidence_line}_"
+    return {
+        "messages": [AIMessage(content=updated)],
+        "verified": True,
+    }
+
+
 def _limit_node(state: AgentState) -> dict:
     """Inject a final message when the tool call limit is reached."""
     return {
@@ -72,22 +88,6 @@ def _limit_node(state: AgentState) -> dict:
                 "information I've gathered above."
             )
         ]
-    }
-
-
-def _verify_node(state: AgentState) -> dict:
-    """Score confidence of the agent's answer against retrieved evidence."""
-    model = init_chat_model(MODEL_NAME, temperature=0)
-    response = model.invoke(
-        [SystemMessage(content=VERIFY_PROMPT)] + state["messages"]
-    )
-    # Extract the confidence line and append it as a footer to the answer
-    confidence_line = response.content.strip()
-    last_answer = state["messages"][-1].content
-    updated = f"{last_answer}\n\n---\n_{confidence_line}_"
-    return {
-        "messages": [AIMessage(content=updated)],
-        "verified": True,
     }
 
 
@@ -112,12 +112,12 @@ def build_graph(checkpointer=None):
 
     graph.add_node("agent", _agent_node)
     graph.add_node("tools", _tool_node)
-    graph.add_node("limit", _limit_node)
     graph.add_node("verify", _verify_node)
+    graph.add_node("limit", _limit_node)
 
     graph.add_edge(START, "agent")
     graph.add_conditional_edges(
-        "agent", _should_continue, ["tools", "limit", "verify", END]
+        "agent", _should_continue, ["tools", "verify", "limit", END]
     )
     graph.add_edge("tools", "agent")
     graph.add_edge("verify", END)
@@ -130,5 +130,5 @@ def build_graph(checkpointer=None):
     return graph.compile(checkpointer=checkpointer)
 
 
-# Default compiled graph with in-memory checkpointing
+# Default compiled graph with persistent checkpointing
 agent = build_graph()

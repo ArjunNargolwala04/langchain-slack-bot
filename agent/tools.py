@@ -1,4 +1,4 @@
-# Database tools. 
+# Database tools 
 # two-phase retrieval: search for summaries then read full content
 
 import re
@@ -14,7 +14,7 @@ def _get_connection() -> sqlite3.Connection:
     return conn
 
 
-# Cache schema string
+# Cache schema str
 _schema_cache: Optional[str] = None
 
 
@@ -147,7 +147,6 @@ def search_artifacts(query: str, customer_name: str = "") -> str:
         rows = _run(query)
 
         # If no results and query has multiple terms, retry with OR logic
-        # so that any single term can match (broadens the search)
         terms = [t for t in query.split() if not t.startswith('"')]
         quoted = re.findall(r'"[^"]+"', query)
         if not rows and (len(terms) + len(quoted)) > 1:
