@@ -1,10 +1,17 @@
 # LangGraph agent definition.
 # ReAct loop: agent reasons and calls tools until it has enough info to answer.
 
+import logging
+import time
+
 from langchain.chat_models import init_chat_model
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+
+logger = logging.getLogger(__name__)
+
+MAX_TOOL_CALLS = 15
 
 from app.config import MODEL_NAME
 from agent.state import AgentState
@@ -36,19 +43,46 @@ def _tool_node(state: AgentState) -> dict:
     results = []
     for call in last_message.tool_calls:
         tool = _tools_by_name[call["name"]]
+        args_str = str(call["args"])[:100]
+        t0 = time.perf_counter()
         result = tool.invoke(call["args"])
-        results.append(
-            ToolMessage(content=str(result), tool_call_id=call["id"])
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        result_str = str(result)
+        logger.info(
+            "Tool call: %s | args: %s | %.0fms | %d chars",
+            call["name"], args_str, elapsed_ms, len(result_str),
         )
-    return {"messages": results}
+        results.append(
+            ToolMessage(content=result_str, tool_call_id=call["id"], name=call["name"])
+        )
+    return {
+        "messages": results,
+        "tool_call_count": state.get("tool_call_count", 0) + 1,
+    }
+
+
+def _limit_node(state: AgentState) -> dict:
+    """Inject a final message when the tool call limit is reached."""
+    return {
+        "messages": [
+            AIMessage(
+                content="I've reached the maximum number of tool calls for "
+                "this query. Here's what I found so far based on the "
+                "information I've gathered above."
+            )
+        ]
+    }
 
 
 def _should_continue(state: AgentState) -> str:
     """Route after the agent node.
     If the LLM made tool calls, go to the tools node.
-    If it produced a final response, end the graph."""
+    If it produced a final response, end.
+    If we hit the tool call limit, go to the limit node."""
     last_message = state["messages"][-1]
     if last_message.tool_calls:
+        if state.get("tool_call_count", 0) >= MAX_TOOL_CALLS:
+            return "limit"
         return "tools"
     return END
 
@@ -59,10 +93,12 @@ def build_graph(checkpointer=None):
 
     graph.add_node("agent", _agent_node)
     graph.add_node("tools", _tool_node)
+    graph.add_node("limit", _limit_node)
 
     graph.add_edge(START, "agent")
-    graph.add_conditional_edges("agent", _should_continue, ["tools", END])
+    graph.add_conditional_edges("agent", _should_continue, ["tools", "limit", END])
     graph.add_edge("tools", "agent")
+    graph.add_edge("limit", END)
 
     if checkpointer is None:
         checkpointer = MemorySaver()

@@ -3,13 +3,13 @@
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
-
 import re
+import sqlite3
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
+from openai import APIError, AuthenticationError, RateLimitError
 
 from app.slack import verify_request, post_message, update_message
 from agent.agent import build_graph
@@ -36,12 +36,12 @@ app = FastAPI(title="Northstar Q&A Bot")
 
 
 @app.get("/health")
-async def health():
+async def health() -> dict:
     return {"status": "ok"}
 
 
 @app.post("/slack/events")
-async def slack_events(request: Request):
+async def slack_events(request: Request) -> JSONResponse:
     body = await request.body()
     data = await request.json()
 
@@ -94,13 +94,24 @@ async def slack_events(request: Request):
     return JSONResponse({"ok": True})
 
 
+_TOOL_STATUS = {
+    "get_schema": ":mag: Loading database schema...",
+    "query_database": ":file_cabinet: Querying customer records...",
+    "search_artifacts": ":mag_right: Searching internal documents...",
+    "read_artifact": ":page_facing_up: Reading artifacts...",
+}
+
+_SLACK_MAX_LENGTH = 3900
+
+
 async def _process_message(
     text: str, channel: str, thread_ts: str, user: str
 ) -> None:
     """Run the agent and post the response to Slack.
 
     This runs as a background task after the webhook has already returned 200.
-    Posts an acknowledgment message first, then updates it with the answer.
+    Posts an acknowledgment message first, updates it with progress during
+    tool calls, then replaces it with the final answer.
     """
     ack_ts = None
     try:
@@ -111,32 +122,107 @@ async def _process_message(
             thread_ts=thread_ts,
         )
 
-        # Run the agent with the thread_ts as the conversation thread_id
-        # This enables multi-turn: same Slack thread = same agent memory
-        result = await asyncio.to_thread(
-            agent.invoke,
-            {"messages": [HumanMessage(content=text)]},
-            config={"configurable": {"thread_id": thread_ts}},
+        # Stream the agent so we can update Slack with progress
+        answer = await asyncio.to_thread(
+            _run_agent_with_progress, text, thread_ts, channel, ack_ts,
         )
 
-        # Extract the final answer
-        answer = result["messages"][-1].content
-
-        # Update the acknowledgment message with the actual answer
-        update_message(channel=channel, ts=ack_ts, text=answer)
-
-    except Exception as e:
-        logger.error(f"Error processing message: {e}", exc_info=True)
-        error_text = "Sorry, I ran into an error processing your question. Please try again."
-        if ack_ts:
-            # Update the ack message with the error
-            try:
-                update_message(channel=channel, ts=ack_ts, text=error_text)
-            except Exception:
-                pass
+        # Post the final answer, splitting if it exceeds Slack's limit
+        if len(answer) <= _SLACK_MAX_LENGTH:
+            update_message(channel=channel, ts=ack_ts, text=answer)
         else:
-            # Ack message failed, post a new error message
-            try:
-                post_message(channel=channel, text=error_text, thread_ts=thread_ts)
-            except Exception:
-                pass
+            # First chunk updates the ack message
+            update_message(
+                channel=channel, ts=ack_ts, text=answer[:_SLACK_MAX_LENGTH],
+            )
+            # Remaining chunks as follow-up messages in the thread
+            remaining = answer[_SLACK_MAX_LENGTH:]
+            while remaining:
+                chunk = remaining[:_SLACK_MAX_LENGTH]
+                remaining = remaining[_SLACK_MAX_LENGTH:]
+                post_message(channel=channel, text=chunk, thread_ts=thread_ts)
+
+    except RateLimitError:
+        logger.warning("OpenAI rate limit hit")
+        error_text = "I'm being rate limited right now. Please try again in a moment."
+        _send_error(channel, thread_ts, ack_ts, error_text)
+    except AuthenticationError:
+        logger.error("OpenAI authentication failed")
+        error_text = "There's a configuration issue with the AI service. Please contact an admin."
+        _send_error(channel, thread_ts, ack_ts, error_text)
+    except APIError as e:
+        logger.error(f"OpenAI API error: {e}", exc_info=True)
+        error_text = "The AI service returned an error. Please try again."
+        _send_error(channel, thread_ts, ack_ts, error_text)
+    except sqlite3.Error as e:
+        logger.error(f"Database error: {e}", exc_info=True)
+        error_text = "I had trouble accessing the database. Please try again."
+        _send_error(channel, thread_ts, ack_ts, error_text)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}", exc_info=True)
+        error_text = "Sorry, I ran into an error processing your question. Please try again."
+        _send_error(channel, thread_ts, ack_ts, error_text)
+
+
+def _run_agent_with_progress(
+    text: str, thread_ts: str, channel: str, ack_ts: str,
+) -> str:
+    """Run the agent graph via stream, updating Slack with tool progress.
+
+    This runs in a thread (called via asyncio.to_thread). Returns the final
+    answer string.
+    """
+    config = {"configurable": {"thread_id": thread_ts}}
+    last_status = None
+
+    for event in agent.stream(
+        {"messages": [HumanMessage(content=text)]}, config=config,
+    ):
+        # The stream yields {node_name: state_update} dicts.
+        # After the tools node runs, update Slack with progress.
+        if "tools" in event:
+            tool_messages = event["tools"].get("messages", [])
+            for tm in tool_messages:
+                # ToolMessage has .name with the tool that produced it
+                tool_name = getattr(tm, "name", None)
+                status = _TOOL_STATUS.get(tool_name)
+                if status and status != last_status:
+                    last_status = status
+                    try:
+                        update_message(
+                            channel=channel, ts=ack_ts, text=status,
+                        )
+                    except Exception:
+                        pass
+
+        # After the agent node, check for the final answer
+        if "agent" in event:
+            messages = event["agent"].get("messages", [])
+            if messages:
+                last_msg = messages[-1]
+                if not getattr(last_msg, "tool_calls", None):
+                    return last_msg.content
+
+        # Handle the limit node
+        if "limit" in event:
+            messages = event["limit"].get("messages", [])
+            if messages:
+                return messages[-1].content
+
+    return "I wasn't able to generate a response. Please try again."
+
+
+def _send_error(
+    channel: str, thread_ts: str, ack_ts: str | None, text: str
+) -> None:
+    """Send an error message to Slack, updating the ack if possible."""
+    if ack_ts:
+        try:
+            update_message(channel=channel, ts=ack_ts, text=text)
+        except Exception:
+            pass
+    else:
+        try:
+            post_message(channel=channel, text=text, thread_ts=thread_ts)
+        except Exception:
+            pass

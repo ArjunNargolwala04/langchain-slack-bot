@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# LangSmith tracing (optional — enable by setting LANGSMITH_API_KEY)
+if os.environ.get("LANGSMITH_API_KEY"):
+    os.environ.setdefault("LANGSMITH_TRACING", "true")
+
 # Slack
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
