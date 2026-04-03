@@ -41,7 +41,7 @@ if __name__ == "__main__":
     results.append(test_query(
         "For Verdant Bay, what's the approved live patch window, and exactly "
         "how do we roll back if the validation checks fail?",
-        "2026-03-24",
+        "march 24",
         "test-2",
     ))
 

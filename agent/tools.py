@@ -106,7 +106,7 @@ def search_artifacts(query: str, customer_name: str = "") -> str:
     Use specific keywords, not full sentences.
     Dates with hyphens (e.g. 2026-02-20) are automatically quoted for FTS.
     Optionally filter by customer_name (partial match) to narrow results.
-    Returns up to 10 matches ranked by relevance."""
+    Returns up to 20 matches ranked by relevance."""
     # Auto-quote date patterns so FTS5 treats hyphenated dates as phrases.
     query = re.sub(
         r'(?<!")(\d{4}-\d{2}-\d{2})(?!")',
@@ -118,36 +118,51 @@ def search_artifacts(query: str, customer_name: str = "") -> str:
     try:
         cursor = conn.cursor()
 
-        if customer_name:
-            cursor.execute(
-                "SELECT a.artifact_id, a.artifact_type, a.title, a.summary "
-                "FROM artifacts_fts f "
-                "JOIN artifacts a ON a.artifact_id = f.artifact_id "
-                "LEFT JOIN customers c ON a.customer_id = c.customer_id "
-                "WHERE artifacts_fts MATCH ? "
-                "AND c.name LIKE ? "
-                "LIMIT 10",
-                (query, f"%{customer_name}%"),
-            )
-        else:
-            cursor.execute(
-                "SELECT a.artifact_id, a.artifact_type, a.title, a.summary "
-                "FROM artifacts_fts f "
-                "JOIN artifacts a ON a.artifact_id = f.artifact_id "
-                "WHERE artifacts_fts MATCH ? "
-                "LIMIT 10",
-                (query,),
-            )
+        def _run(fts_query):
+            if customer_name:
+                cursor.execute(
+                    "SELECT a.artifact_id, a.artifact_type, a.title, a.summary, "
+                    "c.name AS customer_name "
+                    "FROM artifacts_fts f "
+                    "JOIN artifacts a ON a.artifact_id = f.artifact_id "
+                    "LEFT JOIN customers c ON a.customer_id = c.customer_id "
+                    "WHERE artifacts_fts MATCH ? "
+                    "AND c.name LIKE ? "
+                    "LIMIT 20",
+                    (fts_query, f"%{customer_name}%"),
+                )
+            else:
+                cursor.execute(
+                    "SELECT a.artifact_id, a.artifact_type, a.title, a.summary, "
+                    "c.name AS customer_name "
+                    "FROM artifacts_fts f "
+                    "JOIN artifacts a ON a.artifact_id = f.artifact_id "
+                    "LEFT JOIN customers c ON a.customer_id = c.customer_id "
+                    "WHERE artifacts_fts MATCH ? "
+                    "LIMIT 20",
+                    (fts_query,),
+                )
+            return cursor.fetchall()
 
-        rows = cursor.fetchall()
+        rows = _run(query)
+
+        # If no results and query has multiple terms, retry with OR logic
+        # so that any single term can match (broadens the search)
+        terms = [t for t in query.split() if not t.startswith('"')]
+        quoted = re.findall(r'"[^"]+"', query)
+        if not rows and (len(terms) + len(quoted)) > 1:
+            or_query = " OR ".join(quoted + terms)
+            rows = _run(or_query)
 
         if not rows:
             return "No artifacts matched the search query."
 
         results = []
         for row in rows:
+            customer = row['customer_name'] or 'N/A'
             results.append(
-                f"[{row['artifact_id']}] ({row['artifact_type']})\n"
+                f"[{row['artifact_id']}] ({row['artifact_type']}) "
+                f"Customer: {customer}\n"
                 f"  Title: {row['title']}\n"
                 f"  Summary: {row['summary']}"
             )
